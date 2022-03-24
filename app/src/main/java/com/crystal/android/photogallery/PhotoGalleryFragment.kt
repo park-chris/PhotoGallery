@@ -8,25 +8,20 @@ import android.os.Handler
 import android.util.Log
 import android.view.*
 import android.widget.ImageView
-import android.widget.TextView
 import androidx.appcompat.widget.SearchView
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
-import androidx.lifecycle.LiveData
 import androidx.lifecycle.Observer
 import androidx.lifecycle.ViewModelProvider
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.crystal.android.photogallery.api.FlickrApi
-import retrofit2.Call
-import retrofit2.Callback
-import retrofit2.Response
-import retrofit2.Retrofit
-import retrofit2.converter.scalars.ScalarsConverterFactory
+import androidx.work.*
+import java.util.concurrent.TimeUnit
 
 private const val TAG = "PhotoGalleryFragment"
+private const val POLL_WORK = "POLL_WORK"
 
-class PhotoGalleryFragment : Fragment() {
+class PhotoGalleryFragment : VisibleFragment() {
     private lateinit var photoGalleryViewModel: PhotoGalleryViewModel
     private lateinit var photoRecyclerView: RecyclerView
     private lateinit var thumbnailDownloader: ThumbnailDownloader<PhotoHolder>
@@ -112,6 +107,15 @@ class PhotoGalleryFragment : Fragment() {
             }
         }
 
+        val toggleItem = menu.findItem(R.id.menu_item_toggle_polling)
+        val isPolling = QueryPreferences.isPolling(requireContext())
+        val toggleItemTitle = if (isPolling) {
+            R.string.stop_polling
+        } else {
+            R.string.start_polling
+        }
+        toggleItem.setTitle(toggleItemTitle)
+
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
@@ -120,16 +124,45 @@ class PhotoGalleryFragment : Fragment() {
                 photoGalleryViewModel.fetchPhotos("")
                 true
             }
+
+            R.id.menu_item_toggle_polling -> {
+                val isPolling = QueryPreferences.isPolling(requireContext())
+                if (isPolling) {
+                    WorkManager.getInstance().cancelUniqueWork(POLL_WORK)
+                    QueryPreferences.setPolling(requireContext(), false)
+                } else {
+                    val constraints = Constraints.Builder()
+                        .setRequiredNetworkType(NetworkType.UNMETERED)
+                        .build()
+                    val periodicRequest = PeriodicWorkRequest
+                        .Builder(PollWorker::class.java, 15, TimeUnit.MINUTES)
+                        .setConstraints(constraints)
+                        .build()
+                    WorkManager.getInstance().enqueueUniquePeriodicWork(POLL_WORK,
+                    ExistingPeriodicWorkPolicy.KEEP,
+                    periodicRequest)
+                    QueryPreferences.setPolling(requireContext(), true)
+                }
+                activity?.invalidateOptionsMenu()
+                return true
+            }
+
             else -> super.onOptionsItemSelected(item)
+
+
         }
+
+
     }
 
 
-    private class PhotoHolder(private val itemImageView: ImageView) : RecyclerView.ViewHolder(itemImageView) {
+    private class PhotoHolder(private val itemImageView: ImageView) :
+        RecyclerView.ViewHolder(itemImageView) {
         val bindDrawable: (Drawable) -> Unit = itemImageView::setImageDrawable
     }
 
-    private inner class PhotoAdapter(private val galleryItem: List<GalleryItem>): RecyclerView.Adapter<PhotoHolder>() {
+    private inner class PhotoAdapter(private val galleryItem: List<GalleryItem>) :
+        RecyclerView.Adapter<PhotoHolder>() {
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): PhotoHolder {
             val view = layoutInflater.inflate(
                 R.layout.list_item_gallery,
